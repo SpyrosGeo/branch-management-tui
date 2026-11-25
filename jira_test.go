@@ -66,7 +66,7 @@ func TestBranchesFromDevStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Branch{
-		{Name: "bugfix/P00535-41-list-view-–-screen-size-issue", Repo: "pmmretail/mediamarkt"},
+		{Name: "bugfix/P00535-41-list-view-–-screen-size-issue", Repo: "pmmretail/mediamarkt", URL: "https://bitbucket.org/x"},
 		{Name: "P00535-41-followup", Repo: "pmmretail/ecomm-ui-bo"},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -149,7 +149,7 @@ func TestPullRequestsAttachToBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	attachPRs(branches, prs)
-	if got := branches[0].PRs; !reflect.DeepEqual(got, []PR{{Status: "MERGED", Target: "develop"}}) {
+	if got := branches[0].PRs; !reflect.DeepEqual(got, []PR{{Status: "MERGED", Target: "develop", URL: "https://bitbucket.org/pmmretail/mediamarkt/pull-requests/120"}}) {
 		t.Errorf("merged branch %v", got)
 	}
 	// The declined PR into develop is dropped; the open one into main stays.
