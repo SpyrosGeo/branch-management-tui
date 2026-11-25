@@ -1,0 +1,6 @@
+{
+  "issues": [
+    { "id": "11431", "key": "P00268-1431", "fields": { "summary": "Giftcard redemption BO", "status": { "name": "Blocked" } } }
+  ],
+  "isLast": true
+}

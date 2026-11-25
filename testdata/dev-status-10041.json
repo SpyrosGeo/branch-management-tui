@@ -1,0 +1,12 @@
+{
+  "errors": [],
+  "detail": [
+    {
+      "branches": [
+        { "name": "bugfix/P00535-41-list-view-–-screen-size-issue", "url": "https://bitbucket.org/x", "repository": { "name": "pmmretail/mediamarkt", "url": "https://bitbucket.org/pmmretail/mediamarkt" } },
+        { "name": "P00535-41-followup", "repository": { "name": "pmmretail/ecomm-ui-bo" } }
+      ],
+      "_instance": { "type": "bitbucket", "name": "Bitbucket Cloud" }
+    }
+  ]
+}
