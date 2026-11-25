@@ -17,12 +17,20 @@ type Config struct {
 	JQL     string
 	// action id -> key, e.g. {"copy-branch": "c"}
 	Keymap map[string]string
+	// full repo name as dev-status reports it, e.g. "pmmretail/mediamarkt" -> local clone
+	Repos map[string]Repo
+}
+
+type Repo struct {
+	Path string `json:"path"` // "~/" is expanded on load
+	Base string `json:"base"` // branch new branches start from; default "develop"
 }
 
 type fileConfig struct {
 	BaseURL string            `json:"baseUrl"`
 	JQL     string            `json:"jql"`
 	Keymap  map[string]string `json:"keymap"`
+	Repos   map[string]Repo   `json:"repos"`
 }
 
 const DefaultJQL = `assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC`
@@ -74,7 +82,26 @@ func loadConfig(getenv func(string) string, path string) (Config, error) {
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing configuration: %s", strings.Join(missing, ", "))
 	}
-	c := Config{BaseURL: baseURL, Email: getenv("JIRA_EMAIL"), Token: getenv("JIRA_API_TOKEN"), JQL: file.JQL, Keymap: file.Keymap}
+	c := Config{BaseURL: baseURL, Email: getenv("JIRA_EMAIL"), Token: getenv("JIRA_API_TOKEN"), JQL: file.JQL, Keymap: file.Keymap, Repos: file.Repos}
+	for name, r := range c.Repos {
+		if r.Path == "" {
+			return Config{}, fmt.Errorf(`repo %q in %s has no "path"`, name, path)
+		}
+		if r.Path == "~" || strings.HasPrefix(r.Path, "~/") {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return Config{}, err
+			}
+			r.Path = filepath.Join(home, r.Path[1:])
+		}
+		if !filepath.IsAbs(r.Path) {
+			return Config{}, fmt.Errorf(`repo %q in %s: "path" must be absolute or start with ~/`, name, path)
+		}
+		if r.Base == "" {
+			r.Base = "develop"
+		}
+		c.Repos[name] = r
+	}
 	if c.JQL == "" {
 		c.JQL = DefaultJQL
 	}

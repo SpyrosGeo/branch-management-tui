@@ -24,6 +24,9 @@ func main() {
 		copySummary(writeClipboard),
 		openTicket(cfg.BaseURL, openBrowser),
 		openBitbucket(openBrowser),
+		checkoutBranch(cfg.Repos),
+		newBranch(cfg.Repos, writeClipboard),
+		cleanupMerged(cfg.Repos),
 	}, cfg.Keymap)
 	if _, err := tea.NewProgram(newModel(load, actions), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "branch-tui: %v\n", err)

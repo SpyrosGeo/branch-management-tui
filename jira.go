@@ -47,6 +47,9 @@ type searchResponse struct {
 			Status  struct {
 				Name string `json:"name"`
 			} `json:"status"`
+			IssueType struct {
+				Name string `json:"name"`
+			} `json:"issuetype"`
 		} `json:"fields"`
 	} `json:"issues"`
 	NextPageToken string `json:"nextPageToken"`
@@ -112,7 +115,7 @@ func (j *Jira) SearchTickets(jql string) ([]Ticket, error) {
 	var out []Ticket
 	pageToken := ""
 	for {
-		q := url.Values{"jql": {jql}, "fields": {"summary,status"}, "maxResults": {"100"}}
+		q := url.Values{"jql": {jql}, "fields": {"summary,status,issuetype"}, "maxResults": {"100"}}
 		if pageToken != "" {
 			q.Set("nextPageToken", pageToken)
 		}
@@ -121,7 +124,7 @@ func (j *Jira) SearchTickets(jql string) ([]Ticket, error) {
 			return nil, err
 		}
 		for _, i := range data.Issues {
-			out = append(out, Ticket{ID: i.ID, Key: i.Key, Summary: i.Fields.Summary, Status: i.Fields.Status.Name})
+			out = append(out, Ticket{ID: i.ID, Key: i.Key, Summary: i.Fields.Summary, Status: i.Fields.Status.Name, Type: i.Fields.IssueType.Name})
 		}
 		if data.IsLast || data.NextPageToken == "" {
 			return out, nil

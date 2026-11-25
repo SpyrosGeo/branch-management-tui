@@ -46,8 +46,8 @@ func TestSearchTicketsPaginatesWithAuth(t *testing.T) {
 	if !reflect.DeepEqual(keys, []string{"P00535-43", "P00535-41", "P00268-1431"}) {
 		t.Errorf("keys %v", keys)
 	}
-	if tickets[1].Status != "Ready For QA" {
-		t.Errorf("status %q", tickets[1].Status)
+	if tickets[1].Status != "Ready For QA" || tickets[1].Type != "Bug" {
+		t.Errorf("status %q, type %q", tickets[1].Status, tickets[1].Type)
 	}
 	if want := "Basic " + base64.StdEncoding.EncodeToString([]byte("me@x:t")); auth != want {
 		t.Errorf("auth %q", auth)

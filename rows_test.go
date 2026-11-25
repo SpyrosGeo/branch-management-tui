@@ -146,6 +146,26 @@ func TestLoadConfig(t *testing.T) {
 		t.Errorf("got %+v", c)
 	}
 
+	t.Setenv("HOME", "/home/me")
+	os.WriteFile(path, []byte(`{"baseUrl":"https://x","repos":{"ws/a":{"path":"~/code/a"},"ws/b":{"path":"/src/b","base":"main"}}}`), 0o600)
+	c, err = loadConfig(envOf(map[string]string{"JIRA_EMAIL": "e", "JIRA_API_TOKEN": "t"}), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]Repo{"ws/a": {Path: "/home/me/code/a", Base: "develop"}, "ws/b": {Path: "/src/b", Base: "main"}}; !reflect.DeepEqual(c.Repos, want) {
+		t.Errorf("repos %+v", c.Repos)
+	}
+	for _, p := range []string{`{}`, `{"path":"code/a"}`} {
+		os.WriteFile(path, []byte(`{"baseUrl":"https://x","repos":{"ws/a":`+p+`}}`), 0o600)
+		if _, err := loadConfig(envOf(map[string]string{"JIRA_EMAIL": "e", "JIRA_API_TOKEN": "t"}), path); err == nil || !strings.Contains(err.Error(), `repo "ws/a"`) {
+			t.Errorf("bad path %s: %v", p, err)
+		}
+	}
+	os.WriteFile(path, []byte(`{"baseUrl":"https://x","repos":{"ws/a":{"path":"~"}}}`), 0o600)
+	if c, err := loadConfig(envOf(map[string]string{"JIRA_EMAIL": "e", "JIRA_API_TOKEN": "t"}), path); err != nil || c.Repos["ws/a"].Path != "/home/me" {
+		t.Errorf("bare ~: %+v %v", c.Repos, err)
+	}
+
 	os.WriteFile(path, []byte(`{nope`), 0o600)
 	if _, err := loadConfig(envOf(nil), path); err == nil || !strings.Contains(err.Error(), "invalid JSON") {
 		t.Errorf("bad JSON: %v", err)

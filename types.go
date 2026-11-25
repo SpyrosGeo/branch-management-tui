@@ -19,6 +19,7 @@ type Ticket struct {
 	Key      string
 	Summary  string
 	Status   string
+	Type     string // issue type, e.g. "Bug" or "Story"
 	Branches []Branch
 	// Set when a lookup for this ticket failed; the ticket still shows.
 	BranchError string

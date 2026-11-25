@@ -1,7 +1,7 @@
 {
   "issues": [
     { "id": "10043", "key": "P00535-43", "fields": { "summary": "Product quantity", "status": { "name": "In Progress" } } },
-    { "id": "10041", "key": "P00535-41", "fields": { "summary": "List view – screen size issue", "status": { "name": "Ready For QA" } } }
+    { "id": "10041", "key": "P00535-41", "fields": { "summary": "List view – screen size issue", "status": { "name": "Ready For QA" }, "issuetype": { "name": "Bug" } } }
   ],
   "nextPageToken": "page2",
   "isLast": false
