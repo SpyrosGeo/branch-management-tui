@@ -21,7 +21,7 @@ Non-secret settings live in `~/.config/branch-tui/config.json` (all optional exc
 {
   "baseUrl": "https://your-site.atlassian.net",
   "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
-  "keymap": { "copy-branch": "y" }
+  "keymap": { "copy-branch": "y", "open-ticket": "o" }
 }
 ```
 
