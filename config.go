@@ -25,7 +25,7 @@ type fileConfig struct {
 	Keymap  map[string]string `json:"keymap"`
 }
 
-const DefaultJQL = `assignee = currentUser() AND statusCategory = "In Progress" ORDER BY updated DESC`
+const DefaultJQL = `assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC`
 
 func configPath(getenv func(string) string) string {
 	dir := getenv("XDG_CONFIG_HOME")

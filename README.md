@@ -1,6 +1,6 @@
 # branch-tui
 
-Keyboard-driven terminal UI listing your in-progress Jira tickets with their linked Bitbucket repos and branches.
+Keyboard-driven terminal UI listing your open (not Done) Jira tickets, grouped by status, with their linked Bitbucket repos and branches.
 
 ## Setup
 
@@ -20,7 +20,7 @@ Non-secret settings live in `~/.config/branch-tui/config.json` (all optional exc
 ```json
 {
   "baseUrl": "https://your-site.atlassian.net",
-  "jql": "assignee = currentUser() AND statusCategory = \"In Progress\" ORDER BY updated DESC",
+  "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
   "keymap": { "copy-branch": "y" }
 }
 ```
@@ -33,10 +33,10 @@ go test ./...
 
 ## Keys
 
-`j/k` or arrows move, `g/G` top/bottom, `/` filter (Esc clears), `r` refresh, `y` copy branch, `?` help, `q` quit.
+`j/k` or arrows move, `g/G` top/bottom, `enter`/`space` fold or unfold a group, `h/l` fold/unfold the current group, `/` filter (Esc clears), `r` refresh, `y` copy branch, `?` help, `q` quit.
 
 ## Adding a feature
 
 Write an `Action` (`actions.go`) and append it to the list in `main.go`. The footer, help overlay and keymap pick it up automatically.
 
-Branches come from Jira's undocumented dev-status endpoint (`BranchSource` in `jira.go`); swap that function if it breaks.
+Branches come from Jira's undocumented dev-status endpoint (`BranchSource` in `jira.go`); swap that function if it breaks. Merge info comes from the same endpoint's pull requests (`PRSource`), so a branch merged without a pull request shows as not merged.

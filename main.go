@@ -15,7 +15,9 @@ func main() {
 		os.Exit(1)
 	}
 	jira := createJira(cfg, http.DefaultClient)
-	load := func() ([]Ticket, error) { return loadTickets(jira.SearchTickets, jira.Branches, cfg.JQL) }
+	load := func() ([]Ticket, error) {
+		return loadTickets(jira.SearchTickets, jira.Branches, jira.PullRequests, cfg.JQL)
+	}
 	actions := withKeymap([]Action{copyBranch(writeClipboard)}, cfg.Keymap)
 	if _, err := tea.NewProgram(newModel(load, actions), tea.WithAltScreen()).Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "branch-tui: %v\n", err)

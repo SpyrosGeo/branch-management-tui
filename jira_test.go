@@ -104,7 +104,13 @@ func TestLoadTicketsKeepsFailuresAndCapsConcurrency(t *testing.T) {
 		}
 		return []Branch{{Name: "b-" + id, Repo: "r"}}, nil
 	}
-	tickets, err := loadTickets(func(string) ([]Ticket, error) { return found, nil }, branches, "jql")
+	prs := func(id string) ([]PullRequest, error) {
+		if id == "e" {
+			return nil, errors.New("pr boom")
+		}
+		return []PullRequest{{Repo: "r", Branch: "b-" + id, Status: "MERGED", Target: "develop"}}, nil
+	}
+	tickets, err := loadTickets(func(string) ([]Ticket, error) { return found, nil }, branches, prs, "jql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +125,43 @@ func TestLoadTicketsKeepsFailuresAndCapsConcurrency(t *testing.T) {
 	if tickets[3].BranchError != "boom" || len(tickets[3].Branches) != 0 {
 		t.Errorf("failed ticket %+v", tickets[3])
 	}
-	if !reflect.DeepEqual(tickets[4].Branches, []Branch{{Name: "b-e", Repo: "r"}}) {
-		t.Errorf("ticket 4 %+v", tickets[4])
+	if !reflect.DeepEqual(tickets[4].Branches, []Branch{{Name: "b-e", Repo: "r"}}) || tickets[4].PRError != "pr boom" {
+		t.Errorf("PR failure should keep branches: %+v", tickets[4])
+	}
+	if !reflect.DeepEqual(tickets[5].Branches[0].PRs, []PR{{Status: "MERGED", Target: "develop"}}) {
+		t.Errorf("ticket 5 %+v", tickets[5])
+	}
+}
+
+func TestPullRequestsAttachToBranches(t *testing.T) {
+	j := serveFixture(t, func(w http.ResponseWriter, r *http.Request) string {
+		if r.URL.Query().Get("dataType") == "pullrequest" {
+			return "dev-status-pr-10041.json"
+		}
+		return "dev-status-10041.json"
+	})
+	branches, err := j.Branches("10041")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prs, err := j.PullRequests("10041")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attachPRs(branches, prs)
+	if got := branches[0].PRs; !reflect.DeepEqual(got, []PR{{Status: "MERGED", Target: "develop"}}) {
+		t.Errorf("merged branch %v", got)
+	}
+	// The declined PR into develop is dropped; the open one into main stays.
+	if got := branches[1].PRs; !reflect.DeepEqual(got, []PR{{Status: "OPEN", Target: "main"}}) {
+		t.Errorf("followup branch %v", got)
+	}
+}
+
+func TestAttachPRsMatchesRepo(t *testing.T) {
+	b := []Branch{{Name: "develop-x", Repo: "a"}}
+	attachPRs(b, []PullRequest{{Repo: "b", Branch: "develop-x", Status: "MERGED", Target: "main"}})
+	if len(b[0].PRs) != 0 {
+		t.Errorf("PR from another repo attached: %v", b[0].PRs)
 	}
 }

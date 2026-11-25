@@ -1,0 +1,33 @@
+{
+  "errors": [],
+  "detail": [
+    {
+      "pullRequests": [
+        {
+          "id": "#120",
+          "name": "Bugfix/P00535-41 list view",
+          "status": "MERGED",
+          "repositoryName": "pmmretail/mediamarkt",
+          "source": { "branch": "bugfix/P00535-41-list-view-–-screen-size-issue", "url": "https://bitbucket.org/pmmretail/mediamarkt/branch/bugfix/P00535-41-list-view-–-screen-size-issue" },
+          "destination": { "branch": "develop", "url": "https://bitbucket.org/pmmretail/mediamarkt/branch/develop" },
+          "url": "https://bitbucket.org/pmmretail/mediamarkt/pull-requests/120"
+        },
+        {
+          "id": "#7",
+          "status": "DECLINED",
+          "repositoryName": "pmmretail/ecomm-ui-bo",
+          "source": { "branch": "P00535-41-followup" },
+          "destination": { "branch": "develop" }
+        },
+        {
+          "id": "#8",
+          "status": "OPEN",
+          "repositoryName": "pmmretail/ecomm-ui-bo",
+          "source": { "branch": "P00535-41-followup" },
+          "destination": { "branch": "main" }
+        }
+      ],
+      "_instance": { "type": "bitbucket", "name": "Bitbucket Cloud" }
+    }
+  ]
+}

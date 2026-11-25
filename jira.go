@@ -20,6 +20,17 @@ func (e *JiraError) Error() string { return e.Msg }
 // BranchSource is a swappable source of branches for an issue; dev-status is undocumented and may change.
 type BranchSource func(issueID string) ([]Branch, error)
 
+// PullRequest is one pull request as returned by dev-status, before it is attached to a Branch.
+type PullRequest struct {
+	Repo   string
+	Branch string // source branch
+	Status string // OPEN, MERGED or DECLINED
+	Target string // destination branch
+}
+
+// PRSource is a swappable source of pull requests for an issue.
+type PRSource func(issueID string) ([]PullRequest, error)
+
 type Jira struct {
 	baseURL string
 	auth    string
@@ -49,6 +60,21 @@ type devStatusResponse struct {
 				Name string `json:"name"`
 			} `json:"repository"`
 		} `json:"branches"`
+	} `json:"detail"`
+}
+
+type devStatusPRResponse struct {
+	Detail []struct {
+		PullRequests []struct {
+			Status         string `json:"status"`
+			RepositoryName string `json:"repositoryName"`
+			Source         struct {
+				Branch string `json:"branch"`
+			} `json:"source"`
+			Destination struct {
+				Branch string `json:"branch"`
+			} `json:"destination"`
+		} `json:"pullRequests"`
 	} `json:"detail"`
 }
 
@@ -120,9 +146,38 @@ func (j *Jira) Branches(issueID string) ([]Branch, error) {
 	return out, nil
 }
 
-// loadTickets fetches branches with at most 5 lookups in flight, preserving order.
-// A failed lookup keeps the ticket and records BranchError.
-func loadTickets(search func(jql string) ([]Ticket, error), branches BranchSource, jql string) ([]Ticket, error) {
+func (j *Jira) PullRequests(issueID string) ([]PullRequest, error) {
+	q := url.Values{"issueId": {issueID}, "applicationType": {"bitbucket"}, "dataType": {"pullrequest"}}
+	var data devStatusPRResponse
+	if err := j.get("/rest/dev-status/latest/issue/detail?"+q.Encode(), &data); err != nil {
+		return nil, err
+	}
+	var out []PullRequest
+	for _, d := range data.Detail {
+		for _, p := range d.PullRequests {
+			out = append(out, PullRequest{Repo: p.RepositoryName, Branch: p.Source.Branch, Status: p.Status, Target: p.Destination.Branch})
+		}
+	}
+	return out, nil
+}
+
+// attachPRs adds open and merged pull requests to their source branch; declined ones are dropped.
+func attachPRs(branches []Branch, prs []PullRequest) {
+	for i := range branches {
+		b := &branches[i]
+		for _, p := range prs {
+			// shortcut: matches on branch name, plus repo when dev-status sends one; upgrade if repos share branch names without repositoryName.
+			if p.Branch != b.Name || (p.Repo != "" && p.Repo != b.Repo) || (p.Status != "OPEN" && p.Status != "MERGED") {
+				continue
+			}
+			b.PRs = append(b.PRs, PR{Status: p.Status, Target: p.Target})
+		}
+	}
+}
+
+// loadTickets fetches branches and pull requests with at most 5 tickets in flight, preserving order.
+// A failed lookup keeps the ticket and records BranchError or PRError.
+func loadTickets(search func(jql string) ([]Ticket, error), branches BranchSource, prs PRSource, jql string) ([]Ticket, error) {
 	found, err := search(jql)
 	if err != nil {
 		return nil, err
@@ -135,11 +190,21 @@ func loadTickets(search func(jql string) ([]Ticket, error), branches BranchSourc
 		sem <- struct{}{}
 		go func() {
 			defer func() { <-sem; wg.Done() }()
-			if b, err := branches(t.ID); err != nil {
+			b, err := branches(t.ID)
+			if err != nil {
 				t.BranchError = err.Error()
-			} else {
-				t.Branches = b
+				return
 			}
+			t.Branches = b
+			if len(b) == 0 {
+				return
+			}
+			p, err := prs(t.ID)
+			if err != nil {
+				t.PRError = err.Error()
+				return
+			}
+			attachPRs(t.Branches, p)
 		}()
 	}
 	wg.Wait()

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,9 +20,12 @@ func fixtureTickets() []Ticket {
 func labels(rows []Row) []string {
 	var out []string
 	for _, r := range rows {
-		if r.Branch != nil {
+		switch {
+		case r.Ticket == nil:
+			out = append(out, fmt.Sprintf("#%s(%d)", r.Group, r.Count))
+		case r.Branch != nil:
 			out = append(out, r.Branch.Name)
-		} else {
+		default:
 			out = append(out, r.Ticket.Key)
 		}
 	}
@@ -30,17 +34,53 @@ func labels(rows []Row) []string {
 
 func TestBuildRows(t *testing.T) {
 	ts := fixtureTickets()
-	if got := labels(buildRows(ts, "")); !reflect.DeepEqual(got, []string{"A-1", "feature/A-1-login", "A-1-api", "B-2"}) {
+	none := map[string]bool{}
+	if got := labels(buildRows(ts, "", none)); !reflect.DeepEqual(got, []string{"#In Progress(1)", "A-1", "feature/A-1-login", "A-1-api", "#Blocked(1)", "B-2"}) {
 		t.Errorf("nesting: %v", got)
 	}
-	if got := labels(buildRows(ts, "API")); !reflect.DeepEqual(got, []string{"A-1", "A-1-api"}) {
+	if got := labels(buildRows(ts, "API", none)); !reflect.DeepEqual(got, []string{"#In Progress(1)", "A-1", "A-1-api"}) {
 		t.Errorf("branch filter: %v", got)
 	}
-	if got := buildRows(ts, "login page"); len(got) != 3 {
+	if got := buildRows(ts, "login page", none); len(got) != 4 {
 		t.Errorf("ticket match should keep all branches: %v", labels(got))
 	}
-	if got := buildRows(ts, "zzz"); len(got) != 0 {
+	if got := buildRows(ts, "zzz", none); len(got) != 0 {
 		t.Errorf("no match: %v", labels(got))
+	}
+}
+
+func TestBuildRowsGroupOrder(t *testing.T) {
+	var ts []Ticket
+	for i, s := range []string{"To Do", "Blocked", "Issue Found", "In Progress", "To Do", "Code Review"} {
+		ts = append(ts, Ticket{Key: fmt.Sprintf("K-%d", i), Status: s})
+	}
+	var groups []string
+	for _, r := range buildRows(ts, "", map[string]bool{}) {
+		if r.Ticket == nil {
+			groups = append(groups, fmt.Sprintf("%s(%d)", r.Group, r.Count))
+		}
+	}
+	want := []string{"In Progress(1)", "Issue Found(1)", "Blocked(1)", "Code Review(1)", "To Do(2)"}
+	if !reflect.DeepEqual(groups, want) {
+		t.Errorf("order %v", groups)
+	}
+}
+
+func TestBuildRowsFolding(t *testing.T) {
+	ts := fixtureTickets()
+	folded := map[string]bool{"In Progress": true}
+	if got := labels(buildRows(ts, "", folded)); !reflect.DeepEqual(got, []string{"#In Progress(1)", "#Blocked(1)", "B-2"}) {
+		t.Errorf("folded: %v", got)
+	}
+	if !buildRows(ts, "", folded)[0].Folded {
+		t.Error("title should report folded")
+	}
+	// A filter match unfolds the group without forgetting the fold.
+	if got := labels(buildRows(ts, "api", folded)); !reflect.DeepEqual(got, []string{"#In Progress(1)", "A-1", "A-1-api"}) {
+		t.Errorf("filter should unfold: %v", got)
+	}
+	if !folded["In Progress"] {
+		t.Error("fold state lost")
 	}
 }
 
