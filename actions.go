@@ -2,8 +2,11 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
 
 	"github.com/atotto/clipboard"
 )
@@ -50,6 +53,45 @@ func copyBranch(copy func(string) error) Action {
 				return err
 			}
 			c.Notify("copied " + b.Name)
+			return nil
+		},
+	}
+}
+
+// openBrowser hands url to the OS opener; on WSL the Windows browser is used.
+func openBrowser(url string) error {
+	cmds := [][]string{{"xdg-open", url}, {"wslview", url}, {"explorer.exe", url}}
+	switch {
+	case runtime.GOOS == "darwin":
+		cmds = [][]string{{"open", url}}
+	case os.Getenv("WSL_DISTRO_NAME") != "":
+		cmds = [][]string{{"wslview", url}, {"explorer.exe", url}}
+	}
+	for _, c := range cmds {
+		if _, err := exec.LookPath(c[0]); err != nil {
+			continue
+		}
+		cmd := exec.Command(c[0], c[1:]...) // nil Stdout/Stderr: opener output must not draw over the TUI
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		go cmd.Wait() // reap; explorer.exe exits 1 even on success, so the result is ignored
+		return nil
+	}
+	return errors.New("no browser opener found (xdg-open, wslview or explorer.exe)")
+}
+
+func openTicket(baseURL string, open func(string) error) Action {
+	return Action{
+		ID:      "open-ticket",
+		Key:     "o",
+		Label:   "open in browser",
+		Applies: func(*Ticket, *Branch) bool { return true },
+		Run: func(c ActionContext) error {
+			if err := open(baseURL + "/browse/" + c.Ticket.Key); err != nil {
+				return err
+			}
+			c.Notify("opened " + c.Ticket.Key)
 			return nil
 		},
 	}

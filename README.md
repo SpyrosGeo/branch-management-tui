@@ -33,7 +33,7 @@ go test ./...
 
 ## Keys
 
-`j/k` or arrows move, `g/G` top/bottom, `enter`/`space` fold or unfold a group, `h/l` fold/unfold the current group, `/` filter (Esc clears), `r` refresh, `y` copy branch, `?` help, `q` quit.
+`j/k` or arrows move, `g/G` top/bottom, `enter`/`space` fold or unfold a group, `h/l` fold/unfold the current group, `/` filter (Esc clears), `r` refresh, `y` copy branch, `o` open ticket in browser, `?` help, `q` quit.
 
 ## Adding a feature
 

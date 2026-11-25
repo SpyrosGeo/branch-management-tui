@@ -114,6 +114,18 @@ func TestCopyBranch(t *testing.T) {
 	}
 }
 
+func TestOpenTicket(t *testing.T) {
+	ts := fixtureTickets()
+	var opened, note string
+	a := openTicket("https://x.atlassian.net", func(u string) error { opened = u; return nil })
+	if err := a.Run(ActionContext{Ticket: &ts[0], Branch: &ts[0].Branches[1], Notify: func(s string) { note = s }}); err != nil {
+		t.Fatal(err)
+	}
+	if opened != "https://x.atlassian.net/browse/A-1" || note != "opened A-1" {
+		t.Errorf("opened %q, note %q", opened, note)
+	}
+}
+
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
 func TestLoadConfig(t *testing.T) {
