@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -57,6 +58,23 @@ type statusMsg struct {
 	err  bool
 }
 
+// doneMsg ends an action; an empty status leaves the status line as it was, except a stale busy refusal.
+type doneMsg struct{ status statusMsg }
+
+var busyStatus = statusMsg{"busy: wait for the current action", true}
+
+type pickMsg struct {
+	action  Action
+	row     Row
+	title   string
+	options []string
+}
+
+type picker struct {
+	pickMsg
+	cursor int
+}
+
 type model struct {
 	load      func() ([]Ticket, error)
 	actions   []Action
@@ -68,6 +86,8 @@ type model struct {
 	filter    string
 	filtering bool
 	help      bool
+	busy      bool    // an action is running; a second one is refused
+	pick      *picker // open picker overlay, or nil
 	width     int
 	height    int
 }
@@ -130,8 +150,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if f := lookupFailures(msg.tickets); f != "" {
 			m.status = statusMsg{f, true}
 		}
-	case statusMsg:
-		m.status = msg
+	case doneMsg:
+		m.busy = false
+		if msg.status.text != "" || m.status == busyStatus {
+			m.status = msg.status
+		}
+	case pickMsg:
+		m.busy = false
+		m.pick = &picker{pickMsg: msg}
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
@@ -154,6 +180,9 @@ func (m model) setFold(g string, fold bool) model {
 func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.Type == tea.KeyCtrlC {
 		return m, tea.Quit
+	}
+	if m.pick != nil {
+		return m.pickKey(k)
 	}
 	if m.filtering {
 		switch k.Type {
@@ -226,24 +255,67 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		for _, a := range m.actions {
 			if a.Key == s && a.Applies(row.Ticket, row.Branch) {
-				return m, runAction(a, row)
+				if m.busy {
+					m.status = busyStatus
+					return m, nil
+				}
+				m.busy, m.status = true, statusMsg{}
+				return m, startAction(a, row)
 			}
 		}
 	}
 	return m, nil
 }
 
-func runAction(a Action, row Row) tea.Cmd {
+func (m model) pickKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	p := *m.pick
+	switch k.String() {
+	case "j", "down":
+		p.cursor = min(p.cursor+1, len(p.options)-1)
+	case "k", "up":
+		p.cursor = max(p.cursor-1, 0)
+	case "enter":
+		m.pick, m.busy, m.status = nil, true, statusMsg{}
+		return m, runAction(p.action, p.row, p.cursor)
+	case "esc", "q":
+		m.pick = nil
+		return m, nil
+	}
+	m.pick = &p
+	return m, nil
+}
+
+func failed(a Action, err error) doneMsg {
+	return doneMsg{statusMsg{fmt.Sprintf("%s failed: %v", a.Label, err), true}}
+}
+
+// startAction runs Choose off the UI thread, then either runs the only option or opens the picker.
+func startAction(a Action, row Row) tea.Cmd {
+	if a.Choose == nil {
+		return runAction(a, row, -1)
+	}
+	return func() tea.Msg {
+		title, opts, err := a.Choose(row.Ticket, row.Branch)
+		switch {
+		case err != nil:
+			return failed(a, err)
+		case len(opts) == 0:
+			return failed(a, errors.New("nothing to choose"))
+		case len(opts) == 1:
+			return runAction(a, row, 0)()
+		}
+		return pickMsg{a, row, title, opts}
+	}
+}
+
+func runAction(a Action, row Row, choice int) tea.Cmd {
 	return func() tea.Msg {
 		var last string
-		err := a.Run(ActionContext{Ticket: row.Ticket, Branch: row.Branch, Notify: func(s string) { last = s }})
+		err := a.Run(ActionContext{Ticket: row.Ticket, Branch: row.Branch, Choice: choice, Notify: func(s string) { last = s }})
 		if err != nil {
-			return statusMsg{fmt.Sprintf("%s failed: %v", a.Label, err), true}
+			return failed(a, err)
 		}
-		if last == "" {
-			return nil
-		}
-		return statusMsg{last, false}
+		return doneMsg{statusMsg{last, false}}
 	}
 }
 
@@ -259,6 +331,22 @@ func (m model) View() string {
 			lines = append(lines, cyan.Render(fmt.Sprintf("%-12s", e[0]))+e[1])
 		}
 		lines = append(lines, dim.Render("any key to close"))
+		return box.Render(strings.Join(lines, "\n"))
+	}
+	if p := m.pick; p != nil {
+		lines := []string{lipgloss.NewStyle().Bold(true).Render(p.title)}
+		// Window of options around the cursor; 4 lines go to the border, title and hint.
+		h := max(1, m.height-4)
+		start := max(0, min(p.cursor-h/2, len(p.options)-h))
+		for i := start; i < min(start+h, len(p.options)); i++ {
+			o := p.options[i]
+			if i == p.cursor {
+				lines = append(lines, inverse.Render("> "+o))
+			} else {
+				lines = append(lines, "  "+o)
+			}
+		}
+		lines = append(lines, dim.Render("j/k move · enter choose · esc/q cancel"))
 		return box.Render(strings.Join(lines, "\n"))
 	}
 
@@ -296,15 +384,23 @@ func (m model) View() string {
 	if m.status.err {
 		statusStyle = red
 	}
+	if m.busy && statusText == "" {
+		statusStyle, statusText = yellow, "working…"
+	}
 	if m.loading && len(m.tickets) > 0 {
 		statusText = "refreshing…"
 	}
 	if statusText == "" {
 		statusText = " "
 	}
-	var footer []string
+	// Action keys only, so "? help" fits at 80 columns; help lists the labels.
+	var keys []string
 	for _, a := range m.actions {
-		footer = append(footer, a.Key+" "+a.Label)
+		keys = append(keys, a.Key)
+	}
+	var footer []string
+	if len(keys) > 0 {
+		footer = append(footer, strings.Join(keys, " "))
 	}
 	footer = append(footer, "enter fold", "/ filter", "r refresh", "? help", "q quit")
 

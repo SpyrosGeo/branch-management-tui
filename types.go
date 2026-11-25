@@ -3,13 +3,15 @@ package main
 type Branch struct {
 	Name string
 	Repo string
-	PRs  []PR // open or merged pull requests from this branch; declined ones are dropped
+	URL  string // empty when dev-status sends none
+	PRs  []PR   // open or merged pull requests from this branch; declined ones are dropped
 }
 
 // PR is a pull request as seen from its source branch.
 type PR struct {
 	Status string // "OPEN" or "MERGED"
 	Target string // destination branch
+	URL    string // empty when dev-status sends none
 }
 
 type Ticket struct {

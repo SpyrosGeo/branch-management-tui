@@ -26,6 +26,7 @@ type PullRequest struct {
 	Branch string // source branch
 	Status string // OPEN, MERGED or DECLINED
 	Target string // destination branch
+	URL    string
 }
 
 // PRSource is a swappable source of pull requests for an issue.
@@ -56,6 +57,7 @@ type devStatusResponse struct {
 	Detail []struct {
 		Branches []struct {
 			Name       string `json:"name"`
+			URL        string `json:"url"`
 			Repository struct {
 				Name string `json:"name"`
 			} `json:"repository"`
@@ -68,6 +70,7 @@ type devStatusPRResponse struct {
 		PullRequests []struct {
 			Status         string `json:"status"`
 			RepositoryName string `json:"repositoryName"`
+			URL            string `json:"url"`
 			Source         struct {
 				Branch string `json:"branch"`
 			} `json:"source"`
@@ -140,7 +143,7 @@ func (j *Jira) Branches(issueID string) ([]Branch, error) {
 			if repo == "" {
 				repo = "?"
 			}
-			out = append(out, Branch{Name: b.Name, Repo: repo})
+			out = append(out, Branch{Name: b.Name, Repo: repo, URL: b.URL})
 		}
 	}
 	return out, nil
@@ -155,7 +158,7 @@ func (j *Jira) PullRequests(issueID string) ([]PullRequest, error) {
 	var out []PullRequest
 	for _, d := range data.Detail {
 		for _, p := range d.PullRequests {
-			out = append(out, PullRequest{Repo: p.RepositoryName, Branch: p.Source.Branch, Status: p.Status, Target: p.Destination.Branch})
+			out = append(out, PullRequest{Repo: p.RepositoryName, Branch: p.Source.Branch, Status: p.Status, Target: p.Destination.Branch, URL: p.URL})
 		}
 	}
 	return out, nil
@@ -170,7 +173,7 @@ func attachPRs(branches []Branch, prs []PullRequest) {
 			if p.Branch != b.Name || (p.Repo != "" && p.Repo != b.Repo) || (p.Status != "OPEN" && p.Status != "MERGED") {
 				continue
 			}
-			b.PRs = append(b.PRs, PR{Status: p.Status, Target: p.Target})
+			b.PRs = append(b.PRs, PR{Status: p.Status, Target: p.Target, URL: p.URL})
 		}
 	}
 }
