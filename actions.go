@@ -112,6 +112,10 @@ func copySummary(copy func(string) error) Action {
 	return copyText("copy-summary", "S", "copy summary", func(t *Ticket) string { return t.Summary }, copy)
 }
 
+func copyURL(baseURL string, copy func(string) error) Action {
+	return copyText("copy-url", "U", "copy URL", func(t *Ticket) string { return baseURL + "/browse/" + t.Key }, copy)
+}
+
 func copyText(id, key, label string, text func(*Ticket) string, copy func(string) error) Action {
 	return Action{
 		ID:      id,

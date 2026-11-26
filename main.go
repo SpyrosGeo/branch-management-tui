@@ -22,6 +22,7 @@ func main() {
 		copyBranch(writeClipboard),
 		copyKey(writeClipboard),
 		copySummary(writeClipboard),
+		copyURL(cfg.BaseURL, writeClipboard),
 		openTicket(cfg.BaseURL, openBrowser),
 		openBitbucket(openBrowser),
 	}, cfg.Keymap)

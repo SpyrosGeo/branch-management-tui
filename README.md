@@ -21,7 +21,7 @@ Non-secret settings live in `~/.config/branch-tui/config.json` (all optional exc
 {
   "baseUrl": "https://your-site.atlassian.net",
   "jql": "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
-  "keymap": { "copy-branch": "y", "copy-key": "Y", "copy-summary": "S", "open-ticket": "o", "open-bitbucket": "b" }
+  "keymap": { "copy-branch": "y", "copy-key": "Y", "copy-summary": "S", "copy-url": "U", "open-ticket": "o", "open-bitbucket": "b" }
 }
 ```
 
@@ -33,7 +33,7 @@ go test ./...
 
 ## Keys
 
-`j/k` or arrows move, `g/G` top/bottom, `enter`/`space` fold or unfold a group, `h/l` fold/unfold the current group, `/` filter (Esc clears), `r` refresh, `y` copy branch, `Y` copy ticket key, `S` copy summary, `o` open ticket in browser, `b` open the branch's PR (open, else merged) or branch page in Bitbucket, `?` help, `q` quit.
+`j/k` or arrows move, `g/G` top/bottom, `enter`/`space` fold or unfold a group, `h/l` fold/unfold the current group, `/` filter (Esc clears), `r` refresh, `y` copy branch, `Y` copy ticket key, `S` copy summary, `U` copy ticket URL, `o` open ticket in browser, `b` open the branch's PR (open, else merged) or branch page in Bitbucket, `?` help, `q` quit.
 
 ## Adding a feature
 
