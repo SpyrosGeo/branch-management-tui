@@ -149,7 +149,7 @@ func setupActions(t *testing.T, ts []Ticket) (tea.Model, *[]string) {
 	actions := []Action{
 		openBitbucket(rec),
 		copyKey(rec),
-		copySummary(rec),
+		copyBranch(rec),
 	}
 	m := newModel(func() ([]Ticket, error) { return ts, nil }, actions)
 	return send(m, m.Init()()), got
@@ -191,7 +191,7 @@ func TestAppPickerMovesUp(t *testing.T) {
 func TestAppFooterFitsEightyColumns(t *testing.T) {
 	m, _ := setupActions(t, fixtureTickets())
 	m = send(m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	if out := m.View(); !strings.Contains(out, "b Y S · enter fold") || !strings.Contains(out, "? help · q quit") {
+	if out := m.View(); !strings.Contains(out, "b Y y · enter fold") || !strings.Contains(out, "? help · q quit") {
 		t.Errorf("footer cut:\n%s", out)
 	}
 }
@@ -227,10 +227,10 @@ func TestAppOpenNoBranch(t *testing.T) {
 	}
 }
 
-func TestAppCopiesKeyAndSummary(t *testing.T) {
+func TestAppCopiesKey(t *testing.T) {
 	m, copied := setupActions(t, fixtureTickets())
-	press(m, "j", "Y", "S")
-	if strings.Join(*copied, "|") != "A-1|Login page" {
+	press(m, "j", "Y")
+	if strings.Join(*copied, "|") != "A-1" {
 		t.Errorf("copied %v", *copied)
 	}
 }
@@ -253,7 +253,7 @@ func TestAppShowsWorkingUntilActionEnds(t *testing.T) {
 	if !strings.Contains(m.View(), "working…") {
 		t.Errorf("working status missing:\n%s", m.View())
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("S")})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	if !strings.Contains(m.View(), "busy: wait for the current action") {
 		t.Errorf("second action not refused:\n%s", m.View())
 	}
@@ -262,7 +262,7 @@ func TestAppShowsWorkingUntilActionEnds(t *testing.T) {
 	if strings.Join(*copied, "|") != "A-1" || !strings.Contains(out, "copied A-1") || strings.Contains(out, "working…") {
 		t.Errorf("copied %v\n%s", *copied, out)
 	}
-	if press(m, "S"); strings.Join(*copied, "|") != "A-1|Login page" {
+	if press(m, "y"); strings.Join(*copied, "|") != "A-1|feature/A-1-login" {
 		t.Errorf("busy not cleared: %v", *copied)
 	}
 }
@@ -310,5 +310,47 @@ func TestBitbucketURLOrder(t *testing.T) {
 	b = &Branch{Name: "bugfix/fix#12?x", Repo: "r", URL: "file:///etc/passwd", PRs: []PR{{Status: "OPEN", URL: `C:\x.exe`}}}
 	if got, _ := bitbucketURL(b); got != "https://bitbucket.org/r/branch/bugfix/fix%2312%3Fx" {
 		t.Errorf("non-https links should be skipped and the name escaped: %q", got)
+	}
+}
+
+func TestAppDetailPopupFoldsComments(t *testing.T) {
+	d := Detail{Key: "A-1", Summary: "Login", Description: "the description",
+		Comments: []Comment{{Author: "Bob", Created: "2026-11-20T10:05:00.000+0000", Body: "looks good"}}}
+	var asked string
+	fetch := func(key string) (Detail, error) { asked = key; return d, nil }
+	m := newModel(func() ([]Ticket, error) { return fixtureTickets(), nil }, []Action{showDetail(fetch)})
+	m2 := press(send(m, m.Init()()), "j", "s")
+	out := m2.View()
+	if asked != "A-1" || !strings.Contains(out, "the description") || !strings.Contains(out, "▸ Comments (1)") || strings.Contains(out, "looks good") {
+		t.Fatalf("asked %q, popup:\n%s", asked, out)
+	}
+	out = press(m2, "c").View()
+	if !strings.Contains(out, "▾ Comments (1)") || !strings.Contains(out, "Bob 2026-11-20 10:05") || !strings.Contains(out, "looks good") {
+		t.Errorf("comments not shown:\n%s", out)
+	}
+	if out := press(m2, "esc").View(); strings.Contains(out, "the description") {
+		t.Errorf("popup not closed:\n%s", out)
+	}
+}
+
+func TestAppDetailPopupScrollsAndSurvivesResize(t *testing.T) {
+	d := Detail{Key: "A-1", Description: strings.Repeat("lorem ipsum dolor ", 60) + "THE-END"}
+	m := newModel(func() ([]Ticket, error) { return fixtureTickets(), nil }, []Action{showDetail(func(string) (Detail, error) { return d, nil })})
+	m2 := send(send(m, m.Init()()), tea.WindowSizeMsg{Width: 30, Height: 10})
+	m2 = press(m2, "j", "s", "G")
+	if out := m2.View(); !strings.Contains(out, "THE-END") || !strings.Contains(out, "▸ Comments (0)") {
+		t.Errorf("G did not reach the end:\n%s", out)
+	}
+	m2 = send(m2, tea.WindowSizeMsg{Width: 140, Height: 10})
+	if out := m2.View(); !strings.Contains(out, "THE-END") {
+		t.Errorf("after resize:\n%s", out)
+	}
+}
+
+func TestAppDetailFetchErrorShowsStatus(t *testing.T) {
+	m := newModel(func() ([]Ticket, error) { return fixtureTickets(), nil }, []Action{showDetail(func(string) (Detail, error) { return Detail{}, errors.New("Jira 404") })})
+	out := press(send(m, m.Init()()), "j", "s").View()
+	if !strings.Contains(out, "show description and comments failed: Jira 404") || strings.Contains(out, "Comments (") {
+		t.Errorf("error not shown:\n%s", out)
 	}
 }

@@ -18,14 +18,14 @@ type ActionContext struct {
 	Branch *Branch // nil on a ticket row
 	Choice int     // index into the options Choose returned; -1 when the action has no Choose
 	Notify func(msg string)
+	Show   func(d Detail) // opens the detail popup once the action finishes
 }
 
 // Action: add a feature by appending one to the list in main.go; footer and help pick it up.
 type Action struct {
-	ID      string
-	Key     string
-	Label   string
-	Applies func(t *Ticket, b *Branch) bool
+	ID    string
+	Key   string
+	Label string
 	// Choose, when set, runs first and lists options; one option runs directly, more open the picker.
 	Choose func(t *Ticket, b *Branch) (title string, options []string, err error)
 	Run    func(ctx ActionContext) error
@@ -84,11 +84,10 @@ func bitbucketURL(b *Branch) (string, error) {
 
 func openBitbucket(open func(string) error) Action {
 	return Action{
-		ID:      "open-bitbucket",
-		Key:     "b",
-		Label:   "open in Bitbucket",
-		Applies: func(*Ticket, *Branch) bool { return true },
-		Choose:  chooseBranch,
+		ID:     "open-bitbucket",
+		Key:    "b",
+		Label:  "open in Bitbucket",
+		Choose: chooseBranch,
 		Run: func(c ActionContext) error {
 			b := rowBranches(c.Ticket, c.Branch)[c.Choice]
 			u, err := bitbucketURL(b)
@@ -108,20 +107,11 @@ func copyKey(copy func(string) error) Action {
 	return copyText("copy-key", "Y", "copy key", func(t *Ticket) string { return t.Key }, copy)
 }
 
-func copySummary(copy func(string) error) Action {
-	return copyText("copy-summary", "S", "copy summary", func(t *Ticket) string { return t.Summary }, copy)
-}
-
-func copyURL(baseURL string, copy func(string) error) Action {
-	return copyText("copy-url", "U", "copy URL", func(t *Ticket) string { return baseURL + "/browse/" + t.Key }, copy)
-}
-
 func copyText(id, key, label string, text func(*Ticket) string, copy func(string) error) Action {
 	return Action{
-		ID:      id,
-		Key:     key,
-		Label:   label,
-		Applies: func(*Ticket, *Branch) bool { return true },
+		ID:    id,
+		Key:   key,
+		Label: label,
 		Run: func(c ActionContext) error {
 			s := text(c.Ticket)
 			if err := copy(s); err != nil {
@@ -143,10 +133,9 @@ func writeClipboard(text string) error {
 
 func copyBranch(copy func(string) error) Action {
 	return Action{
-		ID:      "copy-branch",
-		Key:     "y",
-		Label:   "copy branch",
-		Applies: func(*Ticket, *Branch) bool { return true },
+		ID:    "copy-branch",
+		Key:   "y",
+		Label: "copy branch",
 		Run: func(c ActionContext) error {
 			b := c.Branch
 			if b == nil && len(c.Ticket.Branches) > 0 {
@@ -190,15 +179,30 @@ func openBrowser(url string) error {
 
 func openTicket(baseURL string, open func(string) error) Action {
 	return Action{
-		ID:      "open-ticket",
-		Key:     "o",
-		Label:   "open in browser",
-		Applies: func(*Ticket, *Branch) bool { return true },
+		ID:    "open-ticket",
+		Key:   "o",
+		Label: "open in browser",
 		Run: func(c ActionContext) error {
 			if err := open(baseURL + "/browse/" + c.Ticket.Key); err != nil {
 				return err
 			}
 			c.Notify("opened " + c.Ticket.Key)
+			return nil
+		},
+	}
+}
+
+func showDetail(fetch func(key string) (Detail, error)) Action {
+	return Action{
+		ID:    "show-detail",
+		Key:   "s",
+		Label: "show description and comments",
+		Run: func(c ActionContext) error {
+			d, err := fetch(c.Ticket.Key)
+			if err != nil {
+				return err
+			}
+			c.Show(d)
 			return nil
 		},
 	}

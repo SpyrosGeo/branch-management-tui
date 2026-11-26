@@ -59,7 +59,10 @@ type statusMsg struct {
 }
 
 // doneMsg ends an action; an empty status leaves the status line as it was, except a stale busy refusal.
-type doneMsg struct{ status statusMsg }
+type doneMsg struct {
+	status statusMsg
+	detail *Detail // set when the action asked to show a ticket's detail
+}
 
 var busyStatus = statusMsg{"busy: wait for the current action", true}
 
@@ -75,6 +78,12 @@ type picker struct {
 	cursor int
 }
 
+type detailView struct {
+	Detail
+	scroll       int
+	showComments bool
+}
+
 type model struct {
 	load      func() ([]Ticket, error)
 	actions   []Action
@@ -88,6 +97,7 @@ type model struct {
 	help      bool
 	busy      bool    // an action is running; a second one is refused
 	pick      *picker // open picker overlay, or nil
+	detail    *detailView
 	width     int
 	height    int
 }
@@ -152,6 +162,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case doneMsg:
 		m.busy = false
+		if msg.detail != nil {
+			m.detail = &detailView{Detail: *msg.detail}
+		}
 		if msg.status.text != "" || m.status == busyStatus {
 			m.status = msg.status
 		}
@@ -183,6 +196,9 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.pick != nil {
 		return m.pickKey(k)
+	}
+	if m.detail != nil {
+		return m.detailKey(k), nil
 	}
 	if m.filtering {
 		switch k.Type {
@@ -254,7 +270,7 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 		for _, a := range m.actions {
-			if a.Key == s && a.Applies(row.Ticket, row.Branch) {
+			if a.Key == s {
 				if m.busy {
 					m.status = busyStatus
 					return m, nil
@@ -285,8 +301,86 @@ func (m model) pickKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) detailKey(k tea.KeyMsg) model {
+	d := *m.detail
+	maxScroll := max(0, len(m.detailLines(d))-m.detailHeight())
+	switch k.String() {
+	case "j", "down":
+		d.scroll++
+	case "k", "up":
+		d.scroll--
+	case "g":
+		d.scroll = 0
+	case "G":
+		d.scroll = maxScroll
+	case "c", "enter", " ":
+		d.showComments = !d.showComments
+		maxScroll = max(0, len(m.detailLines(d))-m.detailHeight())
+	case "esc", "q":
+		m.detail = nil
+		return m
+	}
+	d.scroll = max(0, min(d.scroll, maxScroll))
+	m.detail = &d
+	return m
+}
+
+// detailWidth is the text width inside the popup's border and padding.
+func (m model) detailWidth() int {
+	w := m.width
+	if w == 0 {
+		w = 80
+	}
+	return max(20, min(w-4, 100))
+}
+
+// detailHeight is the number of scrolling lines; 4 go to the border, title and hint.
+func (m model) detailHeight() int { return max(1, m.height-4) }
+
+func (m model) detailLines(d detailView) []string {
+	wrap := lipgloss.NewStyle().Width(m.detailWidth())
+	desc := d.Description
+	if desc == "" {
+		desc = dim.Render("no description")
+	}
+	text := []string{wrap.Render(desc), ""}
+	arrow := "▸"
+	if d.showComments {
+		arrow = "▾"
+	}
+	text = append(text, lipgloss.NewStyle().Bold(true).Render(fmt.Sprintf("%s Comments (%d)", arrow, len(d.Comments))))
+	if d.showComments {
+		for _, c := range d.Comments {
+			created := c.Created
+			if len(created) >= 16 {
+				created = strings.Replace(created[:16], "T", " ", 1)
+			}
+			text = append(text, "", cyan.Render(c.Author)+" "+dim.Render(created), wrap.Render(c.Body))
+		}
+	}
+	return strings.Split(strings.Join(text, "\n"), "\n")
+}
+
+func (m model) detailViewString() string {
+	d := *m.detail
+	lines := m.detailLines(d)
+	h := m.detailHeight()
+	// Re-clamp: a resize since the last key press changes how many lines the text wraps to.
+	start := max(0, min(d.scroll, len(lines)-h))
+	end := min(start+h, len(lines))
+	title := lipgloss.NewStyle().Bold(true).Width(m.detailWidth()).MaxHeight(1).Render(keyStyle.Render(d.Key) + " " + d.Summary)
+	hint := "j/k scroll · c comments · esc close"
+	if len(lines) > h {
+		hint = fmt.Sprintf("%d-%d/%d · ", start+1, end, len(lines)) + hint
+	}
+	body := append([]string{title}, lines[start:end]...)
+	body = append(body, dim.Render(hint))
+	popup := box.Render(strings.Join(body, "\n"))
+	return lipgloss.Place(max(m.width, lipgloss.Width(popup)), m.height, lipgloss.Center, lipgloss.Center, popup)
+}
+
 func failed(a Action, err error) doneMsg {
-	return doneMsg{statusMsg{fmt.Sprintf("%s failed: %v", a.Label, err), true}}
+	return doneMsg{status: statusMsg{fmt.Sprintf("%s failed: %v", a.Label, err), true}}
 }
 
 // startAction runs Choose off the UI thread, then either runs the only option or opens the picker.
@@ -311,11 +405,14 @@ func startAction(a Action, row Row) tea.Cmd {
 func runAction(a Action, row Row, choice int) tea.Cmd {
 	return func() tea.Msg {
 		var last string
-		err := a.Run(ActionContext{Ticket: row.Ticket, Branch: row.Branch, Choice: choice, Notify: func(s string) { last = s }})
+		var detail *Detail
+		err := a.Run(ActionContext{Ticket: row.Ticket, Branch: row.Branch, Choice: choice,
+			Notify: func(s string) { last = s },
+			Show:   func(d Detail) { detail = &d }})
 		if err != nil {
 			return failed(a, err)
 		}
-		return doneMsg{statusMsg{last, false}}
+		return doneMsg{status: statusMsg{last, false}, detail: detail}
 	}
 }
 
@@ -332,6 +429,9 @@ func (m model) View() string {
 		}
 		lines = append(lines, dim.Render("any key to close"))
 		return box.Render(strings.Join(lines, "\n"))
+	}
+	if m.detail != nil {
+		return m.detailViewString()
 	}
 	if p := m.pick; p != nil {
 		lines := []string{lipgloss.NewStyle().Bold(true).Render(p.title)}

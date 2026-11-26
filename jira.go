@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 type JiraError struct {
@@ -81,6 +82,30 @@ type devStatusPRResponse struct {
 	} `json:"detail"`
 }
 
+// adf is an Atlassian Document Format node, the rich text Jira API v3 returns.
+type adf struct {
+	Type    string         `json:"type"`
+	Text    string         `json:"text"`
+	Attrs   map[string]any `json:"attrs"`
+	Content []adf          `json:"content"`
+}
+
+type issueResponse struct {
+	Fields struct {
+		Summary     string `json:"summary"`
+		Description adf    `json:"description"`
+		Comment     struct {
+			Comments []struct {
+				Author struct {
+					DisplayName string `json:"displayName"`
+				} `json:"author"`
+				Created string `json:"created"`
+				Body    adf    `json:"body"`
+			} `json:"comments"`
+		} `json:"comment"`
+	} `json:"fields"`
+}
+
 func createJira(c Config, client *http.Client) *Jira {
 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(c.Email+":"+c.Token))
 	return &Jira{baseURL: c.BaseURL, auth: auth, client: client}
@@ -121,7 +146,7 @@ func (j *Jira) SearchTickets(jql string) ([]Ticket, error) {
 			return nil, err
 		}
 		for _, i := range data.Issues {
-			out = append(out, Ticket{ID: i.ID, Key: i.Key, Summary: i.Fields.Summary, Status: i.Fields.Status.Name})
+			out = append(out, Ticket{ID: i.ID, Key: i.Key, Summary: stripControl(i.Fields.Summary), Status: i.Fields.Status.Name})
 		}
 		if data.IsLast || data.NextPageToken == "" {
 			return out, nil
@@ -162,6 +187,91 @@ func (j *Jira) PullRequests(issueID string) ([]PullRequest, error) {
 		}
 	}
 	return out, nil
+}
+
+// IssueDetail fetches a ticket's description and comments.
+// shortcut: uses the comments embedded in the issue (Jira caps that list); page /comment if long threads get cut.
+func (j *Jira) IssueDetail(key string) (Detail, error) {
+	var data issueResponse
+	if err := j.get("/rest/api/3/issue/"+url.PathEscape(key)+"?fields=summary,description,comment", &data); err != nil {
+		return Detail{}, err
+	}
+	d := Detail{Key: key, Summary: stripControl(data.Fields.Summary), Description: adfText(data.Fields.Description)}
+	for _, c := range data.Fields.Comment.Comments {
+		d.Comments = append(d.Comments, Comment{Author: stripControl(c.Author.DisplayName), Created: c.Created, Body: adfText(c.Body)})
+	}
+	return d, nil
+}
+
+// stripControl drops control characters except newline and tab, so Jira users cannot send escape sequences to the terminal.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// adfText flattens ADF to plain text: one line per block, a blank line between top-level blocks.
+func adfText(n adf) string {
+	var b strings.Builder
+	writeADF(&b, n)
+	return strings.TrimSpace(b.String())
+}
+
+func writeADF(b *strings.Builder, n adf) {
+	endLine := func() {
+		if s := b.String(); s != "" && !strings.HasSuffix(s, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	switch n.Type {
+	case "text":
+		b.WriteString(stripControl(n.Text))
+		return
+	case "hardBreak":
+		b.WriteString("\n")
+		return
+	case "mention", "emoji", "inlineCard", "status":
+		for _, k := range []string{"text", "url", "shortName"} {
+			if s, ok := n.Attrs[k].(string); ok && s != "" {
+				b.WriteString(stripControl(s))
+				return
+			}
+		}
+		return
+	case "rule":
+		endLine()
+		b.WriteString("────\n")
+		return
+	case "listItem":
+		b.WriteString("• ")
+	case "orderedList":
+		// shortcut: numbers from 1 and ignores attrs.order; nested lists are not indented.
+		for i, item := range n.Content {
+			endLine()
+			fmt.Fprintf(b, "%d. ", i+1)
+			for _, c := range item.Content {
+				writeADF(b, c)
+			}
+		}
+		endLine()
+		return
+	case "doc":
+		for _, c := range n.Content {
+			writeADF(b, c)
+			endLine()
+			b.WriteString("\n")
+		}
+		return
+	}
+	for _, c := range n.Content {
+		writeADF(b, c)
+	}
+	if n.Type != "" {
+		endLine()
+	}
 }
 
 // attachPRs adds open and merged pull requests to their source branch; declined ones are dropped.

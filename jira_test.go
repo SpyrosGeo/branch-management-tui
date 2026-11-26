@@ -165,3 +165,21 @@ func TestAttachPRsMatchesRepo(t *testing.T) {
 		t.Errorf("PR from another repo attached: %v", b[0].PRs)
 	}
 }
+
+func TestIssueDetailFlattensADF(t *testing.T) {
+	j := serveFixture(t, func(w http.ResponseWriter, r *http.Request) string {
+		if r.URL.Path != "/rest/api/3/issue/A-1" || r.URL.Query().Get("fields") != "summary,description,comment" {
+			t.Errorf("unexpected request %s", r.URL)
+		}
+		return "issue-detail.json"
+	})
+	d, err := j.IssueDetail("A-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Detail{Key: "A-1", Summary: "Login page", Description: "Hello @Ana\nsecond line]0;pwned\n\n1. first\n2. second\n\n• one\n• two",
+		Comments: []Comment{{Author: "Bob", Created: "2026-11-20T10:05:00.000+0000", Body: "looks good"}}}
+	if !reflect.DeepEqual(d, want) {
+		t.Errorf("got %#v", d)
+	}
+}

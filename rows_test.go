@@ -126,18 +126,6 @@ func TestOpenTicket(t *testing.T) {
 	}
 }
 
-func TestCopyURL(t *testing.T) {
-	ts := fixtureTickets()
-	var copied string
-	a := copyURL("https://x.atlassian.net", func(s string) error { copied = s; return nil })
-	if err := a.Run(ActionContext{Ticket: &ts[0], Notify: func(string) {}}); err != nil {
-		t.Fatal(err)
-	}
-	if copied != "https://x.atlassian.net/browse/A-1" {
-		t.Errorf("copied %q", copied)
-	}
-}
-
 func envOf(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
 
 func TestLoadConfig(t *testing.T) {

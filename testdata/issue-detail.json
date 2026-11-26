@@ -1,0 +1,31 @@
+{
+  "key": "A-1",
+  "fields": {
+    "summary": "Login page",
+    "description": {
+      "type": "doc", "version": 1,
+      "content": [
+        {"type": "paragraph", "content": [
+          {"type": "text", "text": "Hello "},
+          {"type": "mention", "attrs": {"id": "abc", "text": "@Ana"}},
+          {"type": "hardBreak"},
+          {"type": "text", "text": "second line\u001b]0;pwned\u0007"}
+        ]},
+        {"type": "orderedList", "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "first"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "second"}]}]}
+        ]},
+        {"type": "bulletList", "content": [
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "one"}]}]},
+          {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "two"}]}]}
+        ]}
+      ]
+    },
+    "comment": {
+      "comments": [
+        {"author": {"displayName": "Bob"}, "created": "2026-11-20T10:05:00.000+0000",
+         "body": {"type": "doc", "version": 1, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "looks good"}]}]}}
+      ]
+    }
+  }
+}

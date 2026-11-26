@@ -24,3 +24,17 @@ type Ticket struct {
 	BranchError string
 	PRError     string
 }
+
+// Detail is a ticket's description and comments as plain text, fetched on demand.
+type Detail struct {
+	Key         string
+	Summary     string
+	Description string
+	Comments    []Comment
+}
+
+type Comment struct {
+	Author  string
+	Created string // as Jira sends it, e.g. 2026-11-20T10:00:00.000+0000
+	Body    string
+}

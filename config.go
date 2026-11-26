@@ -78,8 +78,5 @@ func loadConfig(getenv func(string) string, path string) (Config, error) {
 	if c.JQL == "" {
 		c.JQL = DefaultJQL
 	}
-	if c.Keymap == nil {
-		c.Keymap = map[string]string{}
-	}
 	return c, nil
 }
