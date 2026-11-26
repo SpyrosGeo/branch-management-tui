@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -37,6 +40,8 @@ type Jira struct {
 	baseURL string
 	auth    string
 	client  *http.Client
+	mu      sync.Mutex
+	me      string // current user's accountId, fetched on first use
 }
 
 type searchResponse struct {
@@ -111,13 +116,27 @@ func createJira(c Config, client *http.Client) *Jira {
 	return &Jira{baseURL: c.BaseURL, auth: auth, client: client}
 }
 
-func (j *Jira) get(path string, out any) error {
-	req, err := http.NewRequest("GET", j.baseURL+path, nil)
+func (j *Jira) get(path string, out any) error { return j.do("GET", path, nil, out) }
+
+// do sends body as JSON when set and decodes the response into out when set.
+func (j *Jira) do(method, path string, body, out any) error {
+	var r io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return &JiraError{Msg: err.Error()}
+		}
+		r = bytes.NewReader(data)
+	}
+	req, err := http.NewRequest(method, j.baseURL+path, r)
 	if err != nil {
 		return &JiraError{Msg: err.Error()}
 	}
 	req.Header.Set("Authorization", j.auth)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	res, err := j.client.Do(req)
 	if err != nil {
 		return &JiraError{Msg: fmt.Sprintf("Network error reaching %s: %v", j.baseURL, err)}
@@ -128,6 +147,9 @@ func (j *Jira) get(path string, out any) error {
 	}
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return &JiraError{Msg: fmt.Sprintf("Jira %d on %s", res.StatusCode, strings.SplitN(path, "?", 2)[0]), Status: res.StatusCode}
+	}
+	if out == nil {
+		return nil
 	}
 	return json.NewDecoder(res.Body).Decode(out)
 }
@@ -193,7 +215,7 @@ func (j *Jira) PullRequests(issueID string) ([]PullRequest, error) {
 // shortcut: uses the comments embedded in the issue (Jira caps that list); page /comment if long threads get cut.
 func (j *Jira) IssueDetail(key string) (Detail, error) {
 	var data issueResponse
-	if err := j.get("/rest/api/3/issue/"+url.PathEscape(key)+"?fields=summary,description,comment", &data); err != nil {
+	if err := j.get(issuePath(key)+"?fields=summary,description,comment", &data); err != nil {
 		return Detail{}, err
 	}
 	d := Detail{Key: key, Summary: stripControl(data.Fields.Summary), Description: adfText(data.Fields.Description)}
@@ -201,6 +223,90 @@ func (j *Jira) IssueDetail(key string) (Detail, error) {
 		d.Comments = append(d.Comments, Comment{Author: stripControl(c.Author.DisplayName), Created: c.Created, Body: adfText(c.Body)})
 	}
 	return d, nil
+}
+
+func issuePath(key string) string { return "/rest/api/3/issue/" + url.PathEscape(key) }
+
+// Transitions lists the transitions Jira offers for a ticket in its current status.
+func (j *Jira) Transitions(key string) ([]Transition, error) {
+	var data struct {
+		Transitions []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			To   struct {
+				Name string `json:"name"`
+			} `json:"to"`
+			Fields map[string]struct {
+				Required        bool `json:"required"`
+				HasDefaultValue bool `json:"hasDefaultValue"`
+			} `json:"fields"`
+		} `json:"transitions"`
+	}
+	if err := j.get(issuePath(key)+"/transitions?expand=transitions.fields", &data); err != nil {
+		return nil, err
+	}
+	var out []Transition
+	for _, t := range data.Transitions {
+		needs := false
+		for _, f := range t.Fields {
+			needs = needs || (f.Required && !f.HasDefaultValue)
+		}
+		out = append(out, Transition{ID: t.ID, Name: stripControl(t.Name), To: stripControl(t.To.Name), NeedsFields: needs})
+	}
+	return out, nil
+}
+
+func (j *Jira) Transition(key, id string) error {
+	return j.do("POST", issuePath(key)+"/transitions", map[string]any{"transition": map[string]string{"id": id}}, nil)
+}
+
+// AssignableUsers lists the people Jira allows as assignee of a ticket, sorted by name.
+// shortcut: one page of up to 1000; page the endpoint if a project has more assignable users.
+func (j *Jira) AssignableUsers(key string) ([]User, error) {
+	var data []struct {
+		AccountID   string `json:"accountId"`
+		DisplayName string `json:"displayName"`
+		AccountType string `json:"accountType"`
+		Active      bool   `json:"active"`
+	}
+	q := url.Values{"issueKey": {key}, "maxResults": {"1000"}}
+	if err := j.get("/rest/api/3/user/assignable/search?"+q.Encode(), &data); err != nil {
+		return nil, err
+	}
+	var out []User
+	for _, u := range data {
+		if u.Active && u.AccountType == "atlassian" { // skip deactivated users and app/bot accounts
+			out = append(out, User{AccountID: u.AccountID, Name: stripControl(u.DisplayName)})
+		}
+	}
+	sort.Slice(out, func(a, b int) bool { return strings.ToLower(out[a].Name) < strings.ToLower(out[b].Name) })
+	return out, nil
+}
+
+// Assign sets a ticket's assignee; an empty accountID unassigns it.
+func (j *Jira) Assign(key, accountID string) error {
+	var id any // null unassigns
+	if accountID != "" {
+		id = accountID
+	}
+	return j.do("PUT", issuePath(key)+"/assignee", map[string]any{"accountId": id}, nil)
+}
+
+// Myself returns the current user's accountId, asking Jira only once.
+func (j *Jira) Myself() (string, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.me != "" {
+		return j.me, nil
+	}
+	var data struct {
+		AccountID string `json:"accountId"`
+	}
+	if err := j.get("/rest/api/3/myself", &data); err != nil {
+		return "", err
+	}
+	j.me = data.AccountID
+	return j.me, nil
 }
 
 // stripControl drops control characters except newline and tab, so Jira users cannot send escape sequences to the terminal.

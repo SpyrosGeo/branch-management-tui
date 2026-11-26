@@ -62,6 +62,8 @@ type statusMsg struct {
 type doneMsg struct {
 	status statusMsg
 	detail *Detail // set when the action asked to show a ticket's detail
+	// ticketKey's status becomes ticketStatus in the list, without a reload; empty for no change.
+	ticketKey, ticketStatus string
 }
 
 var busyStatus = statusMsg{"busy: wait for the current action", true}
@@ -71,11 +73,14 @@ type pickMsg struct {
 	row     Row
 	title   string
 	options []string
+	other   bool // adds an "Other…" entry that takes typed text
 }
 
 type picker struct {
 	pickMsg
 	cursor int
+	typing bool // "Other…" chosen: keys edit text
+	text   string
 }
 
 type detailView struct {
@@ -168,6 +173,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.status.text != "" || m.status == busyStatus {
 			m.status = msg.status
 		}
+		if msg.ticketKey != "" {
+			// Copy: rows from the previous slice may still be read by an action in flight.
+			m.tickets = append([]Ticket(nil), m.tickets...)
+			for i := range m.tickets {
+				if m.tickets[i].Key == msg.ticketKey {
+					m.tickets[i].Status = msg.ticketStatus
+				}
+			}
+		}
 	case pickMsg:
 		m.busy = false
 		m.pick = &picker{pickMsg: msg}
@@ -206,16 +220,8 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter, m.filtering = "", false
 		case tea.KeyEnter:
 			m.filtering = false
-		case tea.KeyBackspace, tea.KeyDelete:
-			if r := []rune(m.filter); len(r) > 0 {
-				m.filter = string(r[:len(r)-1])
-			}
-		case tea.KeySpace:
-			m.filter += " "
-		case tea.KeyRunes:
-			if !k.Alt {
-				m.filter += string(k.Runes)
-			}
+		default:
+			m.filter = editText(m.filter, k)
 		}
 		m.cursor = 0
 		return m, nil
@@ -283,16 +289,62 @@ func (m model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// editText applies a typing key to s: runes and space append, backspace deletes.
+func editText(s string, k tea.KeyMsg) string {
+	switch k.Type {
+	case tea.KeyBackspace, tea.KeyDelete:
+		if r := []rune(s); len(r) > 0 {
+			return string(r[:len(r)-1])
+		}
+	case tea.KeySpace:
+		return s + " "
+	case tea.KeyRunes:
+		if !k.Alt {
+			return s + string(k.Runes)
+		}
+	}
+	return s
+}
+
+func (p picker) entries() []string {
+	if p.other {
+		return append(append([]string(nil), p.options...), "Other…")
+	}
+	return p.options
+}
+
 func (m model) pickKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	p := *m.pick
+	if p.typing {
+		switch k.Type {
+		case tea.KeyEsc:
+			m.pick = nil
+			return m, nil
+		case tea.KeyEnter:
+			text := strings.TrimSpace(p.text)
+			if text == "" {
+				return m, nil
+			}
+			m.pick, m.busy, m.status = nil, true, statusMsg{}
+			return m, runAction(p.action, p.row, -1, text)
+		default:
+			p.text = editText(p.text, k)
+		}
+		m.pick = &p
+		return m, nil
+	}
 	switch k.String() {
 	case "j", "down":
-		p.cursor = min(p.cursor+1, len(p.options)-1)
+		p.cursor = min(p.cursor+1, len(p.entries())-1)
 	case "k", "up":
 		p.cursor = max(p.cursor-1, 0)
 	case "enter":
+		if p.other && p.cursor == len(p.options) {
+			p.typing = true
+			break
+		}
 		m.pick, m.busy, m.status = nil, true, statusMsg{}
-		return m, runAction(p.action, p.row, p.cursor)
+		return m, runAction(p.action, p.row, p.cursor, "")
 	case "esc", "q":
 		m.pick = nil
 		return m, nil
@@ -386,7 +438,7 @@ func failed(a Action, err error) doneMsg {
 // startAction runs Choose off the UI thread, then either runs the only option or opens the picker.
 func startAction(a Action, row Row) tea.Cmd {
 	if a.Choose == nil {
-		return runAction(a, row, -1)
+		return runAction(a, row, -1, "")
 	}
 	return func() tea.Msg {
 		title, opts, err := a.Choose(row.Ticket, row.Branch)
@@ -396,23 +448,37 @@ func startAction(a Action, row Row) tea.Cmd {
 		case len(opts) == 0:
 			return failed(a, errors.New("nothing to choose"))
 		case len(opts) == 1:
-			return runAction(a, row, 0)()
+			return runAction(a, row, 0, "")()
 		}
-		return pickMsg{a, row, title, opts}
+		return pickMsg{a, row, title, opts, false}
 	}
 }
 
-func runAction(a Action, row Row, choice int) tea.Cmd {
+func runAction(a Action, row Row, choice int, text string) tea.Cmd {
 	return func() tea.Msg {
-		var last string
+		var last, status string
 		var detail *Detail
-		err := a.Run(ActionContext{Ticket: row.Ticket, Branch: row.Branch, Choice: choice,
-			Notify: func(s string) { last = s },
-			Show:   func(d Detail) { detail = &d }})
-		if err != nil {
+		var next *pickMsg
+		err := a.Run(ActionContext{Ticket: row.Ticket, Branch: row.Branch, Choice: choice, Text: text,
+			Notify:    func(s string) { last = s },
+			Show:      func(d Detail) { detail = &d },
+			SetStatus: func(s string) { status = s },
+			Pick: func(title string, options []string, other bool, then func(ActionContext) error) {
+				next = &pickMsg{Action{ID: a.ID, Key: a.Key, Label: a.Label, Run: then}, row, title, options, other}
+			}})
+		switch {
+		case err != nil:
 			return failed(a, err)
+		case next != nil && len(next.options) == 0 && !next.other:
+			return failed(a, errors.New("nothing to choose"))
+		case next != nil:
+			return *next
 		}
-		return doneMsg{status: statusMsg{last, false}, detail: detail}
+		d := doneMsg{status: statusMsg{last, false}, detail: detail}
+		if status != "" {
+			d.ticketKey, d.ticketStatus = row.Ticket.Key, status
+		}
+		return d
 	}
 }
 
@@ -435,11 +501,16 @@ func (m model) View() string {
 	}
 	if p := m.pick; p != nil {
 		lines := []string{lipgloss.NewStyle().Bold(true).Render(p.title)}
+		if p.typing {
+			lines = append(lines, "> "+p.text+"▏", dim.Render("type a name · enter choose · esc cancel"))
+			return box.Render(strings.Join(lines, "\n"))
+		}
+		opts := p.entries()
 		// Window of options around the cursor; 4 lines go to the border, title and hint.
 		h := max(1, m.height-4)
-		start := max(0, min(p.cursor-h/2, len(p.options)-h))
-		for i := start; i < min(start+h, len(p.options)); i++ {
-			o := p.options[i]
+		start := max(0, min(p.cursor-h/2, len(opts)-h))
+		for i := start; i < min(start+h, len(opts)); i++ {
+			o := opts[i]
 			if i == p.cursor {
 				lines = append(lines, inverse.Render("> "+o))
 			} else {

@@ -38,3 +38,17 @@ type Comment struct {
 	Created string // as Jira sends it, e.g. 2026-11-20T10:00:00.000+0000
 	Body    string
 }
+
+// Transition is a move Jira offers from a ticket's current status to the status To.
+type Transition struct {
+	ID          string
+	Name        string
+	To          string
+	NeedsFields bool // a required field without a default; the app cannot fill it in
+}
+
+// User is a Jira user a ticket can be assigned to.
+type User struct {
+	AccountID string
+	Name      string
+}

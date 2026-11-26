@@ -105,8 +105,8 @@ func TestCopyBranch(t *testing.T) {
 	if last != "B-2: nothing to copy" {
 		t.Errorf("last notify %q", last)
 	}
-	if k := withKeymap([]Action{a}, map[string]string{"copy-branch": "c"})[0].Key; k != "c" {
-		t.Errorf("keymap: %q", k)
+	if as, err := withKeymap([]Action{a}, map[string]string{"copy-branch": "c"}); err != nil || as[0].Key != "c" {
+		t.Errorf("keymap: %v %v", as, err)
 	}
 	failing := copyBranch(func(string) error { return errors.New("x") })
 	if err := failing.Run(ActionContext{Ticket: &ts[0], Notify: notify}); err == nil {
@@ -141,7 +141,7 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Config{BaseURL: "https://x.atlassian.net", Email: "e", Token: "t", JQL: DefaultJQL, Keymap: map[string]string{"copy-branch": "c"}}
+	want := Config{BaseURL: "https://x.atlassian.net", Email: "e", Token: "t", JQL: DefaultJQL, Keymap: map[string]string{"copy-branch": "c"}, PRTargets: DefaultPRTargets}
 	if !reflect.DeepEqual(c, want) {
 		t.Errorf("got %+v", c)
 	}

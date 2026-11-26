@@ -17,13 +17,18 @@ type Config struct {
 	JQL     string
 	// action id -> key, e.g. {"copy-branch": "c"}
 	Keymap map[string]string
+	// target branches offered when opening a PR
+	PRTargets []string
 }
 
 type fileConfig struct {
-	BaseURL string            `json:"baseUrl"`
-	JQL     string            `json:"jql"`
-	Keymap  map[string]string `json:"keymap"`
+	BaseURL   string            `json:"baseUrl"`
+	JQL       string            `json:"jql"`
+	Keymap    map[string]string `json:"keymap"`
+	PRTargets []string          `json:"prTargets"`
 }
+
+var DefaultPRTargets = []string{"master", "uat", "qa"}
 
 const DefaultJQL = `assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC`
 
@@ -74,9 +79,12 @@ func loadConfig(getenv func(string) string, path string) (Config, error) {
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf("missing configuration: %s", strings.Join(missing, ", "))
 	}
-	c := Config{BaseURL: baseURL, Email: getenv("JIRA_EMAIL"), Token: getenv("JIRA_API_TOKEN"), JQL: file.JQL, Keymap: file.Keymap}
+	c := Config{BaseURL: baseURL, Email: getenv("JIRA_EMAIL"), Token: getenv("JIRA_API_TOKEN"), JQL: file.JQL, Keymap: file.Keymap, PRTargets: file.PRTargets}
 	if c.JQL == "" {
 		c.JQL = DefaultJQL
+	}
+	if len(c.PRTargets) == 0 {
+		c.PRTargets = DefaultPRTargets
 	}
 	return c, nil
 }

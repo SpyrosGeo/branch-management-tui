@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -181,5 +182,83 @@ func TestIssueDetailFlattensADF(t *testing.T) {
 		Comments: []Comment{{Author: "Bob", Created: "2026-11-20T10:05:00.000+0000", Body: "looks good"}}}
 	if !reflect.DeepEqual(d, want) {
 		t.Errorf("got %#v", d)
+	}
+}
+
+func TestTicketWrites(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		calls = append(calls, r.Method+" "+r.URL.RequestURI()+" "+string(body))
+		switch r.URL.Path {
+		case "/rest/api/3/issue/A-1/transitions":
+			if r.Method == "GET" {
+				w.Write([]byte(`{"transitions":[{"id":"11","name":"Review","to":{"name":"In Review"},"fields":{"x":{"required":true,"hasDefaultValue":true}}},
+					{"id":"31","name":"Close","to":{"name":"Done"},"fields":{"resolution":{"required":true,"hasDefaultValue":false}}}]}`))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case "/rest/api/3/issue/A-1/assignee":
+			w.WriteHeader(http.StatusNoContent)
+		case "/rest/api/3/user/assignable/search":
+			w.Write([]byte(`[{"accountId":"z","displayName":"zed","accountType":"atlassian","active":true},
+				{"accountId":"b","displayName":"Bot","accountType":"app","active":true},
+				{"accountId":"o","displayName":"Old","accountType":"atlassian","active":false},
+				{"accountId":"a","displayName":"Ann","accountType":"atlassian","active":true}]`))
+		case "/rest/api/3/myself":
+			w.Write([]byte(`{"accountId":"me-id"}`))
+		default:
+			t.Errorf("unexpected %s", r.URL)
+		}
+	}))
+	defer srv.Close()
+	j := createJira(Config{BaseURL: srv.URL}, srv.Client())
+
+	ts, err := j.Transitions("A-1")
+	want := []Transition{{ID: "11", Name: "Review", To: "In Review"}, {ID: "31", Name: "Close", To: "Done", NeedsFields: true}}
+	if err != nil || !reflect.DeepEqual(ts, want) {
+		t.Errorf("transitions %+v %v", ts, err)
+	}
+	us, err := j.AssignableUsers("A-1")
+	if err != nil || !reflect.DeepEqual(us, []User{{"a", "Ann"}, {"z", "zed"}}) {
+		t.Errorf("users %+v %v", us, err)
+	}
+	for range 2 {
+		if id, err := j.Myself(); id != "me-id" || err != nil {
+			t.Errorf("myself %q %v", id, err)
+		}
+	}
+	calls = nil
+	if err := j.Transition("A-1", "11"); err != nil {
+		t.Error(err)
+	}
+	if err := j.Assign("A-1", "a"); err != nil {
+		t.Error(err)
+	}
+	if err := j.Assign("A-1", ""); err != nil {
+		t.Error(err)
+	}
+	wantCalls := []string{
+		`POST /rest/api/3/issue/A-1/transitions {"transition":{"id":"11"}}`,
+		`PUT /rest/api/3/issue/A-1/assignee {"accountId":"a"}`,
+		`PUT /rest/api/3/issue/A-1/assignee {"accountId":null}`,
+	}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Errorf("calls %q", calls)
+	}
+}
+
+func TestMyselfAskedOnce(t *testing.T) {
+	n := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		w.Write([]byte(`{"accountId":"me-id"}`))
+	}))
+	defer srv.Close()
+	j := createJira(Config{BaseURL: srv.URL}, srv.Client())
+	j.Myself()
+	j.Myself()
+	if n != 1 {
+		t.Errorf("asked %d times", n)
 	}
 }

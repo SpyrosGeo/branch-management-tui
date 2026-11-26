@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -352,5 +353,137 @@ func TestAppDetailFetchErrorShowsStatus(t *testing.T) {
 	out := press(send(m, m.Init()()), "j", "s").View()
 	if !strings.Contains(out, "show description and comments failed: Jira 404") || strings.Contains(out, "Comments (") {
 		t.Errorf("error not shown:\n%s", out)
+	}
+}
+
+func setupTicketActions(t *testing.T, ts []Ticket) (tea.Model, *[]string) {
+	got := &[]string{}
+	rec := func(s string) error { *got = append(*got, s); return nil }
+	list := func(key string) ([]Transition, error) {
+		return []Transition{{ID: "11", Name: "Review", To: "In Review"}, {ID: "21", Name: "Reopen", To: "To Do"},
+			{ID: "22", Name: "Back", To: "To Do"}, {ID: "31", Name: "Close", To: "Done", NeedsFields: true}}, nil
+	}
+	apply := func(key, id string) error { *got = append(*got, "transition "+key+" "+id); return nil }
+	users := func(key string) ([]User, error) { return []User{{AccountID: "u1", Name: "Ann"}}, nil }
+	me := func() (string, error) { return "me-id", nil }
+	assign := func(key, id string) error { *got = append(*got, "assign "+key+" "+id); return nil }
+	actions := []Action{
+		transitionTicket("https://x.atlassian.net", list, apply, rec),
+		assignTicket(users, me, assign),
+		openPR([]string{"master", "uat", "qa"}, rec),
+	}
+	m := newModel(func() ([]Ticket, error) { return ts, nil }, actions)
+	return send(m, m.Init()()), got
+}
+
+func TestAppTransitionUpdatesRow(t *testing.T) {
+	m, got := setupTicketActions(t, fixtureTickets())
+	m = press(m, "j", "t")
+	out := m.View()
+	for _, s := range []string{"Transition A-1 [In Progress]", "> In Review", "Reopen → To Do", "Back → To Do", "  Done"} {
+		if !strings.Contains(out, s) {
+			t.Fatalf("missing %q in\n%s", s, out)
+		}
+	}
+	out = press(m, "enter").View()
+	if strings.Join(*got, "|") != "transition A-1 11" || !strings.Contains(out, "A-1 → In Review") || !strings.Contains(out, "[In Review]") {
+		t.Errorf("got %v\n%s", *got, out)
+	}
+}
+
+func TestAppTransitionNeedingFieldsOpensBrowser(t *testing.T) {
+	m, got := setupTicketActions(t, fixtureTickets())
+	out := press(m, "j", "t", "G", "j", "j", "j", "enter").View()
+	if strings.Join(*got, "|") != "https://x.atlassian.net/browse/A-1" || !strings.Contains(out, `A-1: "Close" needs fields, opened in browser`) || !strings.Contains(out, "[In Progress]") {
+		t.Errorf("got %v\n%s", *got, out)
+	}
+}
+
+func TestAppAssign(t *testing.T) {
+	for _, c := range []struct {
+		keys       []string
+		want, note string
+	}{
+		{nil, "assign A-1 me-id", "A-1 → me"},
+		{[]string{"j"}, "assign A-1 ", "A-1 unassigned"},
+		{[]string{"j", "j"}, "assign A-1 u1", "A-1 → Ann"},
+	} {
+		m, got := setupTicketActions(t, fixtureTickets())
+		m = press(m, "j", "a")
+		if out := m.View(); !strings.Contains(out, "Assign A-1") || !strings.Contains(out, "Ann") {
+			t.Fatalf("picker missing:\n%s", out)
+		}
+		out := press(m, append(c.keys, "enter")...).View()
+		if strings.Join(*got, "|") != c.want || !strings.Contains(out, c.note) {
+			t.Errorf("got %v\n%s", *got, out)
+		}
+	}
+}
+
+func TestAppOpenPRChainsBranchAndTargetPickers(t *testing.T) {
+	m, got := setupTicketActions(t, fixtureTickets())
+	m = press(m, "j", "p")
+	if !strings.Contains(m.View(), "Branch for A-1") {
+		t.Fatalf("branch picker missing:\n%s", m.View())
+	}
+	m = press(m, "enter")
+	if out := m.View(); !strings.Contains(out, "Target branch for feature/A-1-login") || !strings.Contains(out, "Other…") {
+		t.Fatalf("target picker missing:\n%s", out)
+	}
+	out := press(m, "j", "enter").View()
+	want := "https://bitbucket.org/web/pull-requests/new?dest=uat&source=feature%2FA-1-login"
+	if strings.Join(*got, "|") != want || !strings.Contains(out, "opened "+want) {
+		t.Errorf("got %v\n%s", *got, out)
+	}
+}
+
+func TestAppOpenPRTypedTarget(t *testing.T) {
+	m, got := setupTicketActions(t, fixtureTickets())
+	m = press(m, "j", "j", "p", "G", "j", "j", "j", "enter")
+	if !strings.Contains(m.View(), "type a name") {
+		t.Fatalf("text input missing:\n%s", m.View())
+	}
+	m = press(m, "enter") // empty: stays open
+	m = press(m, "space", "r", "e", "l", "x")
+	m = send(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	press(m, "/", "1", "enter")
+	if strings.Join(*got, "|") != "https://bitbucket.org/web/pull-requests/new?dest=rel%2F1&source=feature%2FA-1-login" {
+		t.Errorf("got %v", *got)
+	}
+	m, got = setupTicketActions(t, fixtureTickets())
+	out := press(m, "j", "j", "p", "k", "k", "k", "j", "j", "j", "enter", "q", "esc").View()
+	if len(*got) != 0 || strings.Contains(out, "Target branch") {
+		t.Errorf("esc should cancel typing: %v\n%s", *got, out)
+	}
+}
+
+func TestAppOpenPRPrefersOpenPR(t *testing.T) {
+	ts := fixtureTickets()
+	ts[0].Branches[0].PRs = []PR{{Status: "OPEN", Target: "qa", URL: "https://bb/pr/9"}, {Status: "MERGED", Target: "master", URL: "https://bb/pr/1"}}
+	m, got := setupTicketActions(t, ts)
+	press(m, "j", "j", "p", "j", "j", "enter")
+	if strings.Join(*got, "|") != "https://bb/pr/9" {
+		t.Errorf("got %v", *got)
+	}
+	m, got = setupTicketActions(t, ts)
+	press(m, "j", "j", "p", "enter")
+	if !strings.Contains(strings.Join(*got, "|"), "/pull-requests/new?dest=master") {
+		t.Errorf("merged PR should not be reused: %v", *got)
+	}
+}
+
+func TestWithKeymapRejectsBadBindings(t *testing.T) {
+	as := []Action{copyBranch(nil), copyURL("", nil)}
+	for keymap, want := range map[string]string{
+		`{"copy-brnach":"c"}`:                 `unknown action "copy-brnach" (known: copy-branch, copy-url)`,
+		`{"copy-branch":"j"}`:                 `copy-branch: "j" is a navigation key`,
+		`{"copy-branch":"Y"}`:                 `copy-branch and copy-url are both bound to "Y"`,
+		`{"copy-branch":"",  "copy-url":"y"}`: `copy-branch and copy-url are both bound to "y"`,
+	} {
+		var km map[string]string
+		json.Unmarshal([]byte(keymap), &km)
+		if _, err := withKeymap(as, km); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", keymap, err)
+		}
 	}
 }

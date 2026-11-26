@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -16,9 +17,14 @@ import (
 type ActionContext struct {
 	Ticket *Ticket
 	Branch *Branch // nil on a ticket row
-	Choice int     // index into the options Choose returned; -1 when the action has no Choose
+	Choice int     // index into the options Choose or Pick offered; -1 when there were none or text was typed
+	Text   string  // what the user typed after choosing "Other…"
 	Notify func(msg string)
 	Show   func(d Detail) // opens the detail popup once the action finishes
+	// SetStatus shows the ticket in the new status once the action finishes, without a reload.
+	SetStatus func(status string)
+	// Pick opens a picker once Run returns; then runs with the choice. other adds "Other…" for typed text.
+	Pick func(title string, options []string, other bool, then func(ActionContext) error)
 }
 
 // Action: add a feature by appending one to the list in main.go; footer and help pick it up.
@@ -208,13 +214,185 @@ func showDetail(fetch func(key string) (Detail, error)) Action {
 	}
 }
 
-func withKeymap(actions []Action, keymap map[string]string) []Action {
+// reservedKeys are the navigation keys handled before actions in model.key; an action bound to one never runs.
+var reservedKeys = map[string]bool{
+	"q": true, "j": true, "k": true, "g": true, "G": true, "/": true, "?": true, "r": true,
+	"h": true, "l": true, " ": true, "enter": true, "esc": true, "up": true, "down": true,
+	"left": true, "right": true, "ctrl+c": true,
+}
+
+// withKeymap applies the configured bindings and rejects unknown action IDs, reserved keys and duplicates.
+func withKeymap(actions []Action, keymap map[string]string) ([]Action, error) {
+	ids := map[string]bool{}
+	for _, a := range actions {
+		ids[a.ID] = true
+	}
+	var known []string
+	for id := range ids {
+		known = append(known, id)
+	}
+	sort.Strings(known)
+	var problems []string
+	for id := range keymap {
+		if !ids[id] {
+			problems = append(problems, fmt.Sprintf("unknown action %q (known: %s)", id, strings.Join(known, ", ")))
+		}
+	}
 	out := make([]Action, len(actions))
+	byKey := map[string]string{}
 	for i, a := range actions {
 		if k := keymap[a.ID]; k != "" {
 			a.Key = k
 		}
+		if reservedKeys[a.Key] {
+			problems = append(problems, fmt.Sprintf("%s: %q is a navigation key", a.ID, a.Key))
+		}
+		if other, ok := byKey[a.Key]; ok {
+			problems = append(problems, fmt.Sprintf("%s and %s are both bound to %q", other, a.ID, a.Key))
+		}
+		byKey[a.Key] = a.ID
 		out[i] = a
 	}
+	if len(problems) > 0 {
+		sort.Strings(problems)
+		return nil, errors.New("keymap: " + strings.Join(problems, "; "))
+	}
+	return out, nil
+}
+
+// transitionLabels names each transition by its target status, adding the transition name where two share one.
+func transitionLabels(ts []Transition) []string {
+	seen := map[string]int{}
+	for _, t := range ts {
+		seen[t.To]++
+	}
+	var out []string
+	for _, t := range ts {
+		if seen[t.To] > 1 {
+			out = append(out, t.Name+" → "+t.To)
+		} else {
+			out = append(out, t.To)
+		}
+	}
 	return out
+}
+
+func transitionTicket(baseURL string, list func(key string) ([]Transition, error), apply func(key, id string) error, open func(string) error) Action {
+	return Action{
+		ID:    "transition",
+		Key:   "t",
+		Label: "transition ticket",
+		Run: func(c ActionContext) error {
+			key := c.Ticket.Key
+			ts, err := list(key)
+			if err != nil {
+				return err
+			}
+			if len(ts) == 0 {
+				return errors.New(key + " has no transitions")
+			}
+			c.Pick("Transition "+key+" ["+c.Ticket.Status+"]", transitionLabels(ts), false, func(c ActionContext) error {
+				t := ts[c.Choice]
+				if t.NeedsFields {
+					if err := open(baseURL + "/browse/" + key); err != nil {
+						return err
+					}
+					c.Notify(fmt.Sprintf("%s: %q needs fields, opened in browser", key, t.Name))
+					return nil
+				}
+				if err := apply(key, t.ID); err != nil {
+					return err
+				}
+				c.SetStatus(t.To)
+				c.Notify(key + " → " + t.To)
+				return nil
+			})
+			return nil
+		},
+	}
+}
+
+func assignTicket(users func(key string) ([]User, error), me func() (string, error), assign func(key, accountID string) error) Action {
+	return Action{
+		ID:    "assign",
+		Key:   "a",
+		Label: "assign ticket",
+		Run: func(c ActionContext) error {
+			key := c.Ticket.Key
+			us, err := users(key)
+			if err != nil {
+				return err
+			}
+			opts := []string{"Assign to me", "Unassign"}
+			for _, u := range us {
+				opts = append(opts, u.Name)
+			}
+			c.Pick("Assign "+key, opts, false, func(c ActionContext) error {
+				id, name := "", ""
+				switch c.Choice {
+				case 0:
+					var err error
+					if id, err = me(); err != nil {
+						return err
+					}
+					name = "me"
+				case 1:
+				default:
+					id, name = us[c.Choice-2].AccountID, us[c.Choice-2].Name
+				}
+				if err := assign(key, id); err != nil {
+					return err
+				}
+				if id == "" {
+					c.Notify(key + " unassigned")
+				} else {
+					c.Notify(key + " → " + name)
+				}
+				return nil
+			})
+			return nil
+		},
+	}
+}
+
+// prURL is the branch's open PR into target, else Bitbucket's create-PR page from the branch into target.
+func prURL(b *Branch, target string) (string, error) {
+	for _, p := range b.PRs {
+		if p.Status == "OPEN" && p.Target == target && isWebURL(p.URL) {
+			return p.URL, nil
+		}
+	}
+	if b.Repo == "?" {
+		return "", errors.New("no repo for " + b.Name)
+	}
+	// shortcut: assumes Bitbucket Cloud, like bitbucketURL.
+	return "https://bitbucket.org/" + b.Repo + "/pull-requests/new?" + url.Values{"source": {b.Name}, "dest": {target}}.Encode(), nil
+}
+
+func openPR(targets []string, open func(string) error) Action {
+	return Action{
+		ID:     "open-pr",
+		Key:    "p",
+		Label:  "open PR to a target branch",
+		Choose: chooseBranch,
+		Run: func(c ActionContext) error {
+			b := rowBranches(c.Ticket, c.Branch)[c.Choice]
+			c.Pick("Target branch for "+b.Name, targets, true, func(c ActionContext) error {
+				target := c.Text
+				if target == "" {
+					target = targets[c.Choice]
+				}
+				u, err := prURL(b, target)
+				if err != nil {
+					return err
+				}
+				if err := open(u); err != nil {
+					return err
+				}
+				c.Notify("opened " + u)
+				return nil
+			})
+			return nil
+		},
+	}
 }
