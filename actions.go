@@ -162,12 +162,14 @@ func copyBranch(copy func(string) error) Action {
 
 // openBrowser hands url to the OS opener; on WSL the Windows browser is used.
 func openBrowser(url string) error {
-	cmds := [][]string{{"xdg-open", url}, {"wslview", url}, {"explorer.exe", url}}
+	// rundll32 not explorer.exe: explorer opens a File Explorer window for URLs with a query string
+	win := []string{"rundll32.exe", "url.dll,FileProtocolHandler", url}
+	cmds := [][]string{{"xdg-open", url}, {"wslview", url}, win}
 	switch {
 	case runtime.GOOS == "darwin":
 		cmds = [][]string{{"open", url}}
 	case os.Getenv("WSL_DISTRO_NAME") != "":
-		cmds = [][]string{{"wslview", url}, {"explorer.exe", url}}
+		cmds = [][]string{{"wslview", url}, win}
 	}
 	for _, c := range cmds {
 		if _, err := exec.LookPath(c[0]); err != nil {
@@ -177,10 +179,10 @@ func openBrowser(url string) error {
 		if err := cmd.Start(); err != nil {
 			return err
 		}
-		go cmd.Wait() // reap; explorer.exe exits 1 even on success, so the result is ignored
+		go cmd.Wait() // reap; opener exit codes are unreliable, so the result is ignored
 		return nil
 	}
-	return errors.New("no browser opener found (xdg-open, wslview or explorer.exe)")
+	return errors.New("no browser opener found (xdg-open, wslview or rundll32.exe)")
 }
 
 func openTicket(baseURL string, open func(string) error) Action {
