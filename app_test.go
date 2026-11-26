@@ -148,7 +148,7 @@ func setupActions(t *testing.T, ts []Ticket) (tea.Model, *[]string) {
 	rec := func(s string) error { *got = append(*got, s); return nil }
 	actions := []Action{
 		openBitbucket(rec),
-		copyKey(rec),
+		copyURL("https://x.atlassian.net", rec),
 		copyBranch(rec),
 	}
 	m := newModel(func() ([]Ticket, error) { return ts, nil }, actions)
@@ -227,10 +227,10 @@ func TestAppOpenNoBranch(t *testing.T) {
 	}
 }
 
-func TestAppCopiesKey(t *testing.T) {
+func TestAppCopiesTicketURL(t *testing.T) {
 	m, copied := setupActions(t, fixtureTickets())
 	press(m, "j", "Y")
-	if strings.Join(*copied, "|") != "A-1" {
+	if strings.Join(*copied, "|") != "https://x.atlassian.net/browse/A-1" {
 		t.Errorf("copied %v", *copied)
 	}
 }
@@ -259,10 +259,10 @@ func TestAppShowsWorkingUntilActionEnds(t *testing.T) {
 	}
 	m = send(m, cmd())
 	out := m.View()
-	if strings.Join(*copied, "|") != "A-1" || !strings.Contains(out, "copied A-1") || strings.Contains(out, "working…") {
+	if strings.Join(*copied, "|") != "https://x.atlassian.net/browse/A-1" || !strings.Contains(out, "copied https://x.atlassian.net/browse/A-1") || strings.Contains(out, "working…") {
 		t.Errorf("copied %v\n%s", *copied, out)
 	}
-	if press(m, "y"); strings.Join(*copied, "|") != "A-1|feature/A-1-login" {
+	if press(m, "y"); strings.Join(*copied, "|") != "https://x.atlassian.net/browse/A-1|feature/A-1-login" {
 		t.Errorf("busy not cleared: %v", *copied)
 	}
 }

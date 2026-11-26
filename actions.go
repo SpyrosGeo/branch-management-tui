@@ -103,8 +103,8 @@ func openBitbucket(open func(string) error) Action {
 	}
 }
 
-func copyKey(copy func(string) error) Action {
-	return copyText("copy-key", "Y", "copy key", func(t *Ticket) string { return t.Key }, copy)
+func copyURL(baseURL string, copy func(string) error) Action {
+	return copyText("copy-url", "Y", "copy ticket URL", func(t *Ticket) string { return baseURL + "/browse/" + t.Key }, copy)
 }
 
 func copyText(id, key, label string, text func(*Ticket) string, copy func(string) error) Action {

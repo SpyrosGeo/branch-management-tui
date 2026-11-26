@@ -20,7 +20,7 @@ func main() {
 	}
 	actions := withKeymap([]Action{
 		copyBranch(writeClipboard),
-		copyKey(writeClipboard),
+		copyURL(cfg.BaseURL, writeClipboard),
 		showDetail(jira.IssueDetail),
 		openTicket(cfg.BaseURL, openBrowser),
 		openBitbucket(openBrowser),
